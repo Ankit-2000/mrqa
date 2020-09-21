@@ -309,9 +309,12 @@ class BaseTrainer(object):
         num_batches = sum([len(iterator[0]) for iterator in iter_lst])
         
         for epoch in range(self.args.start_epoch, self.args.start_epoch + self.args.epochs):
+            
+            # model.train() tells your model that you are training the model
             self.model.train()
             start = time.time()
             batch_step = 1
+            
             for data_loader, sampler in iter_lst:
                 if self.args.distributed:
                     sampler.set_epoch(epoch)
@@ -336,14 +339,22 @@ class BaseTrainer(object):
                         start_positions = start_positions.cuda(self.args.gpu, non_blocking=True)
                         end_positions = end_positions.cuda(self.args.gpu, non_blocking=True)
 
+                    # call model
                     loss = self.model(input_ids, seg_ids, input_mask, start_positions, end_positions)
                     loss = loss.mean()
                     loss = loss / self.args.gradient_accumulation_steps
+                    
+                    # loss.backward() computes dloss/dx for every parameter x which has requires_grad=True. 
+                    # These are accumulated into x.grad for every parameter x.
                     loss.backward()
 
                     avg_loss = self.cal_running_avg_loss(loss.item() * self.args.gradient_accumulation_steps, avg_loss)
                     if step % self.args.gradient_accumulation_steps == 0:
+                        # optimizer.step updates the value of x using the gradient x.grad
                         self.optimizer.step()
+                        
+                        # optimizer.zero_grad() clears x.grad for every parameter x in the optimizer.
+                        # It’s important to call this before loss.backward(), otherwise you’ll accumulate the gradients from multiple passes.
                         self.optimizer.zero_grad()
 
                     if epoch != 0 and i % 2000 == 0:
