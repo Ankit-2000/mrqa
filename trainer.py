@@ -24,6 +24,7 @@ from model import DomainQA
 from utils import eta, progress_bar
 
 
+# DOUBT
 def get_opt(param_optimizer, num_train_optimization_steps, args):
     """
     Hack to remove pooler, which is not used
@@ -37,6 +38,7 @@ def get_opt(param_optimizer, num_train_optimization_steps, args):
         {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
     ]
 
+    # BertAdam - Implements BERT version of Adam algorithm
     return BertAdam(optimizer_grouped_parameters,
                     lr=args.lr,
                     warmup=args.warmup_proportion,
@@ -48,24 +50,42 @@ def make_weights_for_balanced_classes(classes, n_classes):
     for c in classes:
         count[c] += 1
     weight_per_class = [0.] * n_classes
+    
+    # total 
     N = float(sum(count))
+    
+    # wt per class is total/count of that class
     for i in range(n_classes):
         weight_per_class[i] = N / float(count[i])
+    
+    # give each data point a weight as per weight of that class
     weight = [0] * len(classes)
     for idx, val in enumerate(classes):
         weight[idx] = weight_per_class[val]
+    
     return weight
 
-
+#-------------------------------------------------------------------------------------------
+# STEPS :
+# model = BaseTrainer(args)
+# model.make_model_env(gpu, ngpus_per_node)
+# model.make_run_env()
+# model.train()
+#------------------------------------------------------------------------------------------- 
 class BaseTrainer(object):
+
     def __init__(self, args):
         self.args = args
         self.set_random_seed(random_seed=args.random_seed)
 
+
+        # set bert tokenizer
         self.tokenizer = BertTokenizer.from_pretrained(args.bert_model,
                                                        do_lower_case=args.do_lower_case)
         if args.debug:
             print("Debugging mode on.")
+        
+        # data ------ list of different train data files, preprocessed 
         self.features_lst = self.get_features(self.args.train_folder, self.args.debug)
 
     def make_model_env(self, gpu, ngpus_per_node):
@@ -88,14 +108,21 @@ class BaseTrainer(object):
             print("Loading model from ", self.args.load_model)
             self.model.load_state_dict(torch.load(self.args.load_model, map_location=lambda storage, loc: storage))
 
+        # max data size among all the train datasets
         max_len = max([len(f) for f in self.features_lst])
+        
+        # max steps
         num_train_optimization_steps = math.ceil(max_len / self.args.batch_size) * self.args.epochs * len(self.features_lst)
 
+
+        # freeze the parts of bert model
         if self.args.freeze_bert:
             for param in self.model.bert.parameters():
                 param.requires_grad = False
 
+
         self.optimizer = get_opt(list(self.model.named_parameters()), num_train_optimization_steps, self.args)
+
 
         if self.args.use_cuda:
             if self.args.distributed:
@@ -126,6 +153,10 @@ class BaseTrainer(object):
             self.dev_files = os.listdir(self.args.dev_folder)
             print(self.dev_files)
 
+
+#-------------------------------------------------------------------------------------------------------------------------
+# Preprocess data, save as pickled file for faster loading, return a list of different preprocessed train data files 
+#--------------------------------------------------------------------------------------------------------------------------
     def get_features(self, train_folder, debug=False):
         pickled_folder = self.args.pickled_folder + "_{}_{}".format(self.args.bert_model, str(self.args.skip_no_ans))
 
@@ -168,6 +199,36 @@ class BaseTrainer(object):
 
         return features_lst
 
+# ----------------------------------------------------------------------------------------------------------------------------------
+# Each preprocessed example looks like this
+# class InputFeatures(object):
+# """A single set of features of data."""
+
+# def __init__(self,
+#              unique_id,
+#              example_index,
+#              doc_span_index,
+#              tokens,
+#              token_to_orig_map,
+#              token_is_max_context,
+#              input_ids,
+#              input_mask,
+#              segment_ids,
+#              start_position=None,
+#              end_position=None):
+#     self.unique_id = unique_id
+#     self.example_index = example_index
+#     self.doc_span_index = doc_span_index
+#     self.tokens = tokens
+#     self.token_to_orig_map = token_to_orig_map
+#     self.token_is_max_context = token_is_max_context
+#     self.input_ids = input_ids
+#     self.input_mask = input_mask
+#     self.segment_ids = segment_ids
+#     self.start_position = start_position
+#     self.end_position = end_position
+# ----------------------------------------------------------------------------------------------------------------------------------
+
     def get_iter(self, features_lst, args):
         all_input_ids = []
         all_input_mask = []
@@ -176,7 +237,10 @@ class BaseTrainer(object):
         all_end_positions = []
         all_labels = []
 
+
+        # iterate through train files......
         for i, train_features in enumerate(features_lst):
+
             all_input_ids.append(torch.tensor([f.input_ids for f in train_features], dtype=torch.long))
             all_input_mask.append(torch.tensor([f.input_mask for f in train_features], dtype=torch.long))
             all_segment_ids.append(torch.tensor([f.segment_ids for f in train_features], dtype=torch.long))
@@ -188,6 +252,8 @@ class BaseTrainer(object):
             all_end_positions.append(end_positions)
             all_labels.append(i * torch.ones_like(start_positions))
 
+
+        # concatenate all data to get a proper dataset
         all_input_ids = torch.cat(all_input_ids, dim=0)
         all_input_mask = torch.cat(all_input_mask, dim=0)
         all_segment_ids = torch.cat(all_segment_ids, dim=0)
@@ -195,15 +261,22 @@ class BaseTrainer(object):
         all_end_positions = torch.cat(all_end_positions, dim=0)
         all_labels = torch.cat(all_labels, dim=0)
 
+        # make a tensor dataset
         train_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids,
                                    all_start_positions, all_end_positions, all_labels)
+        
         if args.distributed:
             train_sampler = DistributedSampler(train_data)
             data_loader = DataLoader(train_data, num_workers=args.workers, pin_memory=True,
                                      sampler=train_sampler, batch_size=args.batch_size)
         else:
+            # deatch --> cut computational graph
+            # cpu --> allocate tensor in RAM
             weights = make_weights_for_balanced_classes(all_labels.detach().cpu().numpy().tolist(), self.args.num_classes)
             weights = torch.DoubleTensor(weights)
+            
+
+            # Samples elements from [0,..,len(weights)-1] with given probabilities (weights).
             train_sampler = torch.utils.data.sampler.WeightedRandomSampler(weights, len(weights))
             data_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=None,
                                                       sampler=train_sampler, num_workers=args.workers,
@@ -224,11 +297,17 @@ class BaseTrainer(object):
         model_to_save.config.to_json_file(save_file_config)
 
     def train(self):
+        # initialize
         step = 1
         avg_loss = 0
         global_step = 1
+        
+        # list of 2 items, data_loader and train_sampler
         iter_lst = [self.get_iter(self.features_lst, self.args)]
+
+        # doubt
         num_batches = sum([len(iterator[0]) for iterator in iter_lst])
+        
         for epoch in range(self.args.start_epoch, self.args.start_epoch + self.args.epochs):
             self.model.train()
             start = time.time()
