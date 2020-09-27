@@ -152,6 +152,7 @@ class BaseTrainer(object):
         else:
             self.dev_files = os.listdir(self.args.dev_folder)
             print(self.dev_files)
+            print("RUN ENV DONE-------------------------------------------------------------------------------------------")
 
 
 #-------------------------------------------------------------------------------------------------------------------------
@@ -197,6 +198,7 @@ class BaseTrainer(object):
                         print("Saving {} file from pkl file...".format(data_name))
                         pickle.dump(train_features, pkl_f)
 
+        print(len(features_lst))
         return features_lst
 
 # ----------------------------------------------------------------------------------------------------------------------------------
@@ -239,8 +241,16 @@ class BaseTrainer(object):
 
 
         # iterate through train files......
+        # 0  266005
+        # 1  236792
+        # 2  76069
+        # 3  697111
+        # 4  455429
+        # 5  87625
+        # total - 1819034
+        # len(data_loader) = 1819034//batch_size  = 28422 
         for i, train_features in enumerate(features_lst):
-
+            print(str(i)+"  "+str(len(train_features)))
             all_input_ids.append(torch.tensor([f.input_ids for f in train_features], dtype=torch.long))
             all_input_mask.append(torch.tensor([f.input_mask for f in train_features], dtype=torch.long))
             all_segment_ids.append(torch.tensor([f.segment_ids for f in train_features], dtype=torch.long))
@@ -282,6 +292,8 @@ class BaseTrainer(object):
                                                       sampler=train_sampler, num_workers=args.workers,
                                                       worker_init_fn=self.set_random_seed(self.args.random_seed), pin_memory=True, drop_last=True)
 
+        print(data_loader)
+        print(train_sampler)
         return data_loader, train_sampler
 
     def save_model(self, epoch, loss):
@@ -303,83 +315,85 @@ class BaseTrainer(object):
         global_step = 1
         
         # list of 2 items, data_loader and train_sampler
+        # length of iter_lst = 1
         iter_lst = [self.get_iter(self.features_lst, self.args)]
+        # iter_lst = [(data_loader, train_loader)]
 
-        # doubt
         num_batches = sum([len(iterator[0]) for iterator in iter_lst])
+        print(num_batches)
         
-        for epoch in range(self.args.start_epoch, self.args.start_epoch + self.args.epochs):
+        # for epoch in range(self.args.start_epoch, self.args.start_epoch + self.args.epochs):
             
-            # model.train() tells your model that you are training the model
-            self.model.train()
-            start = time.time()
-            batch_step = 1
+        #     # model.train() tells your model that you are training the model
+        #     self.model.train()
+        #     start = time.time()
+        #     batch_step = 1
             
-            for data_loader, sampler in iter_lst:
-                if self.args.distributed:
-                    sampler.set_epoch(epoch)
+        #     for data_loader, sampler in iter_lst:
+        #         if self.args.distributed:
+        #             sampler.set_epoch(epoch)
 
-                for i, batch in enumerate(data_loader, start=1):
-                    input_ids, input_mask, seg_ids, start_positions, end_positions, _ = batch
+        #         for i, batch in enumerate(data_loader, start=1):
+        #             input_ids, input_mask, seg_ids, start_positions, end_positions, _ = batch
 
-                    # remove unnecessary pad token
-                    seq_len = torch.sum(torch.sign(input_ids), 1)
-                    max_len = torch.max(seq_len)
+        #             # remove unnecessary pad token
+        #             seq_len = torch.sum(torch.sign(input_ids), 1)
+        #             max_len = torch.max(seq_len)
 
-                    input_ids = input_ids[:, :max_len].clone()
-                    input_mask = input_mask[:, :max_len].clone()
-                    seg_ids = seg_ids[:, :max_len].clone()
-                    start_positions = start_positions.clone()
-                    end_positions = end_positions.clone()
+        #             input_ids = input_ids[:, :max_len].clone()
+        #             input_mask = input_mask[:, :max_len].clone()
+        #             seg_ids = seg_ids[:, :max_len].clone()
+        #             start_positions = start_positions.clone()
+        #             end_positions = end_positions.clone()
 
-                    if self.args.use_cuda:
-                        input_ids = input_ids.cuda(self.args.gpu, non_blocking=True)
-                        input_mask = input_mask.cuda(self.args.gpu, non_blocking=True)
-                        seg_ids = seg_ids.cuda(self.args.gpu, non_blocking=True)
-                        start_positions = start_positions.cuda(self.args.gpu, non_blocking=True)
-                        end_positions = end_positions.cuda(self.args.gpu, non_blocking=True)
+        #             if self.args.use_cuda:
+        #                 input_ids = input_ids.cuda(self.args.gpu, non_blocking=True)
+        #                 input_mask = input_mask.cuda(self.args.gpu, non_blocking=True)
+        #                 seg_ids = seg_ids.cuda(self.args.gpu, non_blocking=True)
+        #                 start_positions = start_positions.cuda(self.args.gpu, non_blocking=True)
+        #                 end_positions = end_positions.cuda(self.args.gpu, non_blocking=True)
 
-                    # call model
-                    loss = self.model(input_ids, seg_ids, input_mask, start_positions, end_positions)
-                    loss = loss.mean()
-                    loss = loss / self.args.gradient_accumulation_steps
+        #             # call model
+        #             loss = self.model(input_ids, seg_ids, input_mask, start_positions, end_positions)
+        #             loss = loss.mean()
+        #             loss = loss / self.args.gradient_accumulation_steps
                     
-                    # loss.backward() computes dloss/dx for every parameter x which has requires_grad=True. 
-                    # These are accumulated into x.grad for every parameter x.
-                    loss.backward()
+        #             # loss.backward() computes dloss/dx for every parameter x which has requires_grad=True. 
+        #             # These are accumulated into x.grad for every parameter x.
+        #             loss.backward()
 
-                    avg_loss = self.cal_running_avg_loss(loss.item() * self.args.gradient_accumulation_steps, avg_loss)
-                    if step % self.args.gradient_accumulation_steps == 0:
-                        # optimizer.step updates the value of x using the gradient x.grad
-                        self.optimizer.step()
+        #             avg_loss = self.cal_running_avg_loss(loss.item() * self.args.gradient_accumulation_steps, avg_loss)
+        #             if step % self.args.gradient_accumulation_steps == 0:
+        #                 # optimizer.step updates the value of x using the gradient x.grad
+        #                 self.optimizer.step()
                         
-                        # optimizer.zero_grad() clears x.grad for every parameter x in the optimizer.
-                        # It’s important to call this before loss.backward(), otherwise you’ll accumulate the gradients from multiple passes.
-                        self.optimizer.zero_grad()
+        #                 # optimizer.zero_grad() clears x.grad for every parameter x in the optimizer.
+        #                 # It’s important to call this before loss.backward(), otherwise you’ll accumulate the gradients from multiple passes.
+        #                 self.optimizer.zero_grad()
 
-                    if epoch != 0 and i % 2000 == 0:
-                        result_dict = self.evaluate_model(i)
-                        for dev_file, f1 in result_dict.items():
-                            print("GPU/CPU {} evaluated {}: {:.2f}".format(self.args.gpu, dev_file, f1), end="\n")
+        #             if epoch != 0 and i % 2000 == 0:
+        #                 result_dict = self.evaluate_model(i)
+        #                 for dev_file, f1 in result_dict.items():
+        #                     print("GPU/CPU {} evaluated {}: {:.2f}".format(self.args.gpu, dev_file, f1), end="\n")
 
-                    global_step += 1
-                    batch_step += 1
-                    msg = "{}/{} {} - ETA : {} - loss: {:.4f}" \
-                        .format(batch_step, num_batches, progress_bar(batch_step, num_batches),
-                                eta(start, batch_step, num_batches),
-                                avg_loss)
-                    print(msg, end="\r")
+        #             global_step += 1
+        #             batch_step += 1
+        #             msg = "{}/{} {} - ETA : {} - loss: {:.4f}" \
+        #                 .format(batch_step, num_batches, progress_bar(batch_step, num_batches),
+        #                         eta(start, batch_step, num_batches),
+        #                         avg_loss)
+        #             print(msg, end="\r")
 
-            print("[GPU Num: {}, epoch: {}, Final loss: {:.4f}]".format(self.args.gpu, epoch, avg_loss))
+        #     print("[GPU Num: {}, epoch: {}, Final loss: {:.4f}]".format(self.args.gpu, epoch, avg_loss))
 
-            # save model
-            if self.args.rank == 0:
-                self.save_model(epoch, avg_loss)
+        #     # save model
+        #     if self.args.rank == 0:
+        #         self.save_model(epoch, avg_loss)
 
-            if self.args.do_valid:
-                result_dict = self.evaluate_model(epoch)
-                for dev_file, f1 in result_dict.items():
-                    print("GPU/CPU {} evaluated {}: {:.2f}".format(self.args.gpu, dev_file, f1), end="\n")
+        #     if self.args.do_valid:
+        #         result_dict = self.evaluate_model(epoch)
+        #         for dev_file, f1 in result_dict.items():
+        #             print("GPU/CPU {} evaluated {}: {:.2f}".format(self.args.gpu, dev_file, f1), end="\n")
 
     def evaluate_model(self, epoch):
         # result directory
